@@ -11,6 +11,9 @@ Restart=on-failure
 RestartSec=10
 # Без буферизации, чтобы лог моста был виден сразу
 Environment=PYTHONUNBUFFERED=1
+# Адрес узла-накопителя (hex): узнаётся командой
+#   python3 -c "import RNS; print(RNS.Destination.hash(RNS.Identity.from_file('$HOME/.lxmd/identity'), 'lxmf', 'propagation').hex())"
+Environment=LXMF_PROPAGATION_NODE=<адрес вашего накопителя>
 StandardOutput=journal
 StandardError=journal
 

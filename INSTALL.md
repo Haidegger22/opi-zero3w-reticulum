@@ -283,6 +283,13 @@ MODEL = "hermes-agent"
 CHUNK = 1200          # символов на одно сообщение
 ANNOUNCE_EVERY = 300  # секунд между объявлениями себя в сети
 
+# Адрес узла-накопителя (propagation node) в hex. Если задан — ответы, которые
+# не удалось отдать напрямую (получатель спит, пути нет), кладутся в накопитель
+# и доходят, когда получатель выйдет на связь.
+PROPAGATION_NODE = os.environ.get("LXMF_PROPAGATION_NODE", "").strip()
+DIRECT_WAIT = int(os.environ.get("LXMF_DIRECT_WAIT", "25"))     # с, ожидание подтверждения прямой доставки
+STORE_WAIT = int(os.environ.get("LXMF_STORE_WAIT", "40"))       # с, ожидание приёма накопителем
+
 
 def log(msg):
     line = time.strftime("%Y-%m-%d %H:%M:%S ") + str(msg)
@@ -388,6 +395,12 @@ def main():
 
     router = LXMF.LXMRouter(identity=identity, storagepath=STORAGE)
     local_dest = router.register_delivery_identity(identity, display_name=DISPLAY_NAME)
+    if PROPAGATION_NODE:
+        try:
+            router.set_active_propagation_node(bytes.fromhex(PROPAGATION_NODE))
+            log("узел-накопитель для ответов: " + PROPAGATION_NODE)
+        except Exception:
+            log("не удалось указать узел-накопитель: " + traceback.format_exc())
     address = local_dest.hash.hex()
     log("адрес LXMF: " + address)
     try:
@@ -419,23 +432,55 @@ def main():
         log("объявление не пришло за %d с — ответ отправить не могу" % wait_seconds)
         return None
 
+    def send_parts(remote, text, method, wait_seconds):
+        """Отправляет ответ (при необходимости частями) и ждёт подтверждения.
+
+        Прямая доставка подтверждается состоянием DELIVERED, через накопитель —
+        состоянием SENT (накопитель принял сообщение к себе на хранение)."""
+        chunks = [text[i:i + CHUNK] for i in range(0, len(text), CHUNK)] or [""]
+        confirmed = []
+        for i, part in enumerate(chunks):
+            prefix = "" if len(chunks) == 1 else "(%d/%d) " % (i + 1, len(chunks))
+            msg = LXMF.LXMessage(remote, local_dest, prefix + part,
+                                 title="Hermes",
+                                 desired_method=method)
+            msg.register_delivery_callback(
+                lambda m: confirmed.append(getattr(m, "state", "?")))
+            router.handle_outbound(msg)
+            time.sleep(0.4)
+        deadline = time.time() + wait_seconds
+        while time.time() < deadline and not confirmed:
+            time.sleep(1)
+        return (True, confirmed[0]) if confirmed else (False, None)
+
     def send_reply(source_hash, text):
         dest_identity = recall_identity(source_hash)
         if dest_identity is None:
             return
         remote = RNS.Destination(dest_identity, RNS.Destination.OUT,
                                  RNS.Destination.SINGLE, "lxmf", "delivery")
-        chunks = [text[i:i + CHUNK] for i in range(0, len(text), CHUNK)] or [""]
-        for i, part in enumerate(chunks):
-            prefix = "" if len(chunks) == 1 else "(%d/%d) " % (i + 1, len(chunks))
-            msg = LXMF.LXMessage(remote, local_dest, prefix + part,
-                                 title="Hermes",
-                                 desired_method=LXMF.LXMessage.DIRECT)
-            msg.register_delivery_callback(
-                lambda m, state=None, part=part: log("доставка части (%s): %s"
-                                                     % (part[:20], "ок" if state == LXMF.LXMessage.DELIVERED else state)))
-            router.handle_outbound(msg)
-            time.sleep(0.4)
+        try:
+            has_path = RNS.Transport.has_path(source_hash)
+        except Exception:
+            has_path = False
+
+        # Путь есть — отдаём напрямую (быстро). Пути нет — сразу в накопитель,
+        # чтобы ответ не потерялся, пока получатель спит.
+        if has_path:
+            ok, state = send_parts(remote, text, LXMF.LXMessage.DIRECT, DIRECT_WAIT)
+            if ok:
+                log("ответ доставлен напрямую (состояние %s)" % state)
+                return
+            log("прямая доставка не подтвердилась за %d с" % DIRECT_WAIT)
+
+        if PROPAGATION_NODE:
+            ok, state = send_parts(remote, text, LXMF.LXMessage.PROPAGATED, STORE_WAIT)
+            if ok:
+                log("ответ отдан в накопитель (состояние %s) — дойдёт, когда получатель выйдет на связь" % state)
+                return
+            log("накопитель не принял сообщение за %d с" % STORE_WAIT)
+        else:
+            log("пути к получателю нет, а накопитель не настроен — ответ не отправлен")
 
     def work(message, text):
         try:
@@ -705,7 +750,7 @@ python3 -m http.server 8099 --bind 0.0.0.0
    # Path found, destination <...> is 1 hop away via <...> on AutoInterfacePeer[wlan0/...]
    ```
 
-## 12. Независимость канала от VPN
+## 13. Независимость канала от VPN
 
 По умолчанию через прокси (если он настроен у агента) идут **только запросы к модели**.
 Ни `rnsd`, ни мост прокси не используют: сообщение идёт по локальной сети, и канал работает
@@ -748,7 +793,7 @@ systemctl --user show hermes-gateway -p Environment | tr ' ' '\n' | grep -i no_p
 
 ---
 
-## 13. Если что-то не работает
+## 14. Если что-то не работает
 
 | Симптом | Что проверить |
 |---|---|
@@ -776,7 +821,7 @@ tail -f ~/reticulum/bridge.log             # журнал моста
 
 ---
 
-## 14. Удаление
+## 15. Удаление
 
 ```bash
 systemctl --user disable --now hermes-lxmf-bridge rnsd
@@ -792,6 +837,35 @@ rm -rf ~/.reticulum         # конфиг, ключ узла, хранилищ�
 новый адрес узла.
 
 ---
+
+## Узел-накопитель: чтобы ответы не терялись
+
+Reticulum доставляет сообщения «здесь и сейчас»: если клиент (телефон) спит и не держит
+соединение, доставить некуда — ответ пропадает. Узел-накопитель (LXMF propagation node)
+принимает сообщения и хранит их, пока получатель не выйдет на связь.
+
+1. Конфиг `~/.lxmd/config` — пример лежит в `systemd/lxmd-config.example`; главное:
+   ```
+   [propagation]
+     enable_node = Yes
+   ```
+2. Служба накопителя: юнит `systemd/lxmd.service` скопировать в `~/.config/systemd/user/`,
+   затем `systemctl --user enable --now lxmd` (накопитель создаст `~/.lxmd/identity` и `storage/`).
+3. Узнать адрес накопителя:
+   ```bash
+   python3 -c "import RNS; print(RNS.Destination.hash(RNS.Identity.from_file('$HOME/.lxmd/identity'), 'lxmf', 'propagation').hex())"
+   ```
+4. В юните моста прописать этот адрес: `Environment=LXMF_PROPAGATION_NODE=<адрес>`,
+   перезапустить мост. Мост сначала пытается отдать ответ напрямую, а если подтверждения нет —
+   кладёт его в накопитель.
+5. В приложении на телефоне: **Настройки → Connection → раздел Propagation → Propagation node**.
+   Достаточно выбрать **Automatic** — клиент сам выберет ближайший узел по числу переходов;
+   конкретный накопитель выбирается в том же списке (виден по имени из `node_name`).
+   Кнопка **Sync now** забирает накопленные сообщения вручную.
+
+Как понять, что работает: состояние сообщения `DELIVERED` (8) — отдано напрямую;
+`SENT` (4) — принято накопителем, придёт при выходе получателя на связь.
+Без накопителя сообщение в такой ситуации не доставляется вообще.
 
 ## Приложение: что где слушается
 

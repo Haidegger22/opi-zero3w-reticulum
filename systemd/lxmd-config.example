@@ -1,0 +1,17 @@
+# Узел-накопитель LXMF (lxmd) — хранит сообщения, пока получатель не на связи
+[lxmf]
+  display_name = Зеро — накопитель Reticulum
+  announce_at_start = Yes
+  announce_interval = 30
+  stamp_cost = 12
+
+[propagation]
+  enable_node = Yes
+  node_name = Зеро
+  auth_required = No
+  announce_at_start = Yes
+  autopeer = Yes
+  autopeer_maxdepth = 0
+
+[logging]
+  loglevel = 4

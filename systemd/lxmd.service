@@ -1,0 +1,18 @@
+[Unit]
+Description=LXMF Propagation Node (lxmd) — узел-накопитель Reticulum
+After=network-online.target rnsd.service
+Wants=network-online.target
+Requires=rnsd.service
+
+[Service]
+Type=simple
+# Для отдельного окружения (как на Zero 3W):
+ExecStart=%h/reticulum/venv/bin/lxmd
+# Для установки pip --user используйте: ExecStart=%h/.local/bin/lxmd
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
