@@ -11,9 +11,12 @@ import LXMF
 import RNS
 
 HOME = os.path.expanduser("~")
-ADDRESS_FILE = os.path.join(HOME, "reticulum", "zero_address.txt")
-TEST_IDENTITY = os.path.join(HOME, "reticulum", "test_identity")
-STORAGE = os.path.join(HOME, "reticulum", "lxmf_storage_test")
+ADDRESS_FILE = os.environ.get("LXMF_ADDRESS_FILE",
+                              os.path.join(HOME, "reticulum", "zero_address.txt"))
+TEST_IDENTITY = os.environ.get("LXMF_TEST_IDENTITY",
+                              os.path.join(HOME, "reticulum", "test_identity"))
+STORAGE = os.environ.get("LXMF_TEST_STORAGE",
+                        os.path.join(HOME, "reticulum", "lxmf_storage_test"))
 TIMEOUT = 120
 
 reply_text = []

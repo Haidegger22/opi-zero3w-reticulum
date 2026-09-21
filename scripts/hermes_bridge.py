@@ -16,17 +16,21 @@ import LXMF
 import RNS
 
 HOME = os.path.expanduser("~")
-IDENTITY_FILE = os.path.join(HOME, "reticulum", "zero_hermes_identity")
-STORAGE = os.path.join(HOME, "reticulum", "lxmf_storage")
-ADDRESS_FILE = os.path.join(HOME, "reticulum", "zero_address.txt")
-LOG_FILE = os.path.join(HOME, "reticulum", "bridge.log")
+RET = os.path.join(HOME, "reticulum")
+
+# Всё настраивается через окружение, чтобы один и тот же скрипт работал и на другом узле
+# (например на Джарвисе): имена файлов и имя узла задаются в юните службы.
+DISPLAY_NAME = os.environ.get("LXMF_BOT_NAME", "Зеро (Hermes)")
+IDENTITY_FILE = os.environ.get("LXMF_IDENTITY_FILE", os.path.join(RET, "zero_hermes_identity"))
+STORAGE = os.environ.get("LXMF_STORAGE", os.path.join(RET, "lxmf_storage"))
+ADDRESS_FILE = os.environ.get("LXMF_ADDRESS_FILE", os.path.join(RET, "zero_address.txt"))
+LOG_FILE = os.environ.get("LXMF_LOG", os.path.join(RET, "bridge.log"))
 ENV_FILE = os.path.join(HOME, ".hermes", ".env")
 
 API_URL = os.environ.get("BRIDGE_API_URL", "http://127.0.0.1:8642/v1/chat/completions")
 DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_MODEL = os.environ.get("BRIDGE_DEEPSEEK_MODEL", "deepseek-flash")
 MODEL = "hermes-agent"
-DISPLAY_NAME = "Зеро (Hermes)"
 CHUNK = 1200          # символов на одно сообщение
 ANNOUNCE_EVERY = 300  # секунд между объявлениями себя в сети
 

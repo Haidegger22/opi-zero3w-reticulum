@@ -265,17 +265,21 @@ import LXMF
 import RNS
 
 HOME = os.path.expanduser("~")
-IDENTITY_FILE = os.path.join(HOME, "reticulum", "zero_hermes_identity")
-STORAGE = os.path.join(HOME, "reticulum", "lxmf_storage")
-ADDRESS_FILE = os.path.join(HOME, "reticulum", "zero_address.txt")
-LOG_FILE = os.path.join(HOME, "reticulum", "bridge.log")
+RET = os.path.join(HOME, "reticulum")
+
+# Всё настраивается через окружение, чтобы один и тот же скрипт работал и на другом узле
+# (например на Джарвисе): имена файлов и имя узла задаются в юните службы.
+DISPLAY_NAME = os.environ.get("LXMF_BOT_NAME", "Зеро (Hermes)")
+IDENTITY_FILE = os.environ.get("LXMF_IDENTITY_FILE", os.path.join(RET, "zero_hermes_identity"))
+STORAGE = os.environ.get("LXMF_STORAGE", os.path.join(RET, "lxmf_storage"))
+ADDRESS_FILE = os.environ.get("LXMF_ADDRESS_FILE", os.path.join(RET, "zero_address.txt"))
+LOG_FILE = os.environ.get("LXMF_LOG", os.path.join(RET, "bridge.log"))
 ENV_FILE = os.path.join(HOME, ".hermes", ".env")
 
 API_URL = os.environ.get("BRIDGE_API_URL", "http://127.0.0.1:8642/v1/chat/completions")
 DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
 DEEPSEEK_MODEL = os.environ.get("BRIDGE_DEEPSEEK_MODEL", "deepseek-flash")
 MODEL = "hermes-agent"
-DISPLAY_NAME = "Зеро (Hermes)"
 CHUNK = 1200          # символов на одно сообщение
 ANNOUNCE_EVERY = 300  # секунд между объявлениями себя в сети
 
@@ -499,9 +503,12 @@ import LXMF
 import RNS
 
 HOME = os.path.expanduser("~")
-ADDRESS_FILE = os.path.join(HOME, "reticulum", "zero_address.txt")
-TEST_IDENTITY = os.path.join(HOME, "reticulum", "test_identity")
-STORAGE = os.path.join(HOME, "reticulum", "lxmf_storage_test")
+ADDRESS_FILE = os.environ.get("LXMF_ADDRESS_FILE",
+                              os.path.join(HOME, "reticulum", "zero_address.txt"))
+TEST_IDENTITY = os.environ.get("LXMF_TEST_IDENTITY",
+                              os.path.join(HOME, "reticulum", "test_identity"))
+STORAGE = os.environ.get("LXMF_TEST_STORAGE",
+                        os.path.join(HOME, "reticulum", "lxmf_storage_test"))
 TIMEOUT = 120
 
 reply_text = []
@@ -645,6 +652,36 @@ python3 -m http.server 8099 --bind 0.0.0.0
 - либо просто спросить у агента: `hostname -I` / `ip -brief addr show wlan0`.
 
 ---
+
+## 12. Второй узел в той же сети (необязательно)
+
+Тот же мост можно поднять на второй машине в той же локальной сети — тогда у каждой будет
+свой LXMF-адрес, и телефон сможет писать обеим. Узлы находят друг друга сами по AutoInterface.
+
+Отличия от установки на Zero 3W:
+
+1. Пакеты можно поставить в пользовательский каталог вместо отдельного окружения:
+   ```bash
+   python3 -m pip install --user --break-system-packages -U rns lxmf
+   ```
+   тогда бинарники окажутся в `~/.local/bin` (в `PATH` они могут не попасть — в юните
+   указывайте полный путь `%h/.local/bin/rnsd`).
+2. Юнит `rnsd` берётся из `systemd/rnsd.service`, но `ExecStart` меняется на `%h/.local/bin/rnsd`.
+3. В юните моста задаются СВОИ имена файлов и имя узла через окружение (скрипт читает их
+   из переменных и по умолчанию рассчитан на Zero):
+
+   ```
+   Environment=LXMF_BOT_NAME=Джарвис (Hermes)
+   Environment=LXMF_IDENTITY_FILE=/home/<user>/reticulum/jarvis_hermes_identity
+   Environment=LXMF_STORAGE=/home/<user>/reticulum/lxmf_storage
+   Environment=LXMF_ADDRESS_FILE=/home/<user>/reticulum/jarvis_address.txt
+   Environment=LXMF_LOG=/home/<user>/reticulum/bridge.log
+   ```
+4. Проверка, что узлы видят друг друга (на любой из машин):
+   ```bash
+   rnpath <адрес узла с другой машины>
+   # Path found, destination <...> is 1 hop away via <...> on AutoInterfacePeer[wlan0/...]
+   ```
 
 ## 12. Независимость канала от VPN
 
