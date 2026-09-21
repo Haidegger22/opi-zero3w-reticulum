@@ -1,0 +1,38 @@
+# Конфигурация Reticulum на Orange Pi Zero 3W (для связи со смартфоном через RNS)
+# Подробный пример всех опций: rnsd --exampleconfig
+# Документация: https://reticulum.network/manual/
+
+[reticulum]
+
+  # Zero — всегда включена и стоит на месте, поэтому может быть транспортным узлом:
+  # будет пересылать трафик и объявления для других участников сети.
+  enable_transport = True
+
+  # Общий экземпляр: первая программа поднимает стек, остальные (в том числе наш
+  # мост к Hermes) общаются с ним через локальный сокет.
+  share_instance = Yes
+
+  instance_name = default
+
+
+[logging]
+  # 0 — только критичное, 4 — info (по умолчанию), 6 — отладка
+  loglevel = 4
+
+
+[interfaces]
+
+  # 1. Обнаружение соседей по Wi-Fi/Ethernet без настройки адресов
+  # (широковещательные UDP-пакеты по link-local IPv6).
+  [[Default Interface]]
+    type = AutoInterface
+    enabled = Yes
+
+  # 2. TCP-сервер для смартфона: приложение на телефоне подключается
+  # как TCP-клиент на 192.168.1.50:4242. Нужен потому, что в домашних
+  # Wi-Fi сетях широковещательные пакеты часто режутся между клиентами.
+  [[Phone TCP]]
+    type = TCPServerInterface
+    enabled = Yes
+    listen_ip = 0.0.0.0
+    listen_port = 4242

@@ -1,0 +1,20 @@
+# Секреты и ключи — никогда не коммитим
+.env
+*.env
+*.pem
+*.key
+id_*
+*_identity
+zero_hermes_identity
+test_identity
+zero_address.txt
+
+# Служебное
+__pycache__/
+*.pyc
+*.log
+*.bak-*
+venv/
+.lxmf_storage/
+lxmf_storage/
+lxmf_storage_test/

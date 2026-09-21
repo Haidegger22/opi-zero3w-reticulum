@@ -1,0 +1,18 @@
+[Unit]
+Description=Мост Reticulum (LXMF) → Hermes
+After=network-online.target rnsd.service
+Wants=network-online.target
+Requires=rnsd.service
+
+[Service]
+Type=simple
+ExecStart=%h/reticulum/venv/bin/python %h/reticulum/hermes_bridge.py
+Restart=on-failure
+RestartSec=10
+# Без буферизации, чтобы лог моста был виден сразу
+Environment=PYTHONUNBUFFERED=1
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

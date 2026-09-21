@@ -1,0 +1,209 @@
+#!/usr/bin/env python3
+"""Мост: сообщения из Reticulum (LXMF) → Hermes → ответ обратно в Reticulum.
+
+Логика простая: приходит сообщение от телефона — текст уходит в локальный API
+Hermes (127.0.0.1:8642), ответ возвращается отправителю как LXMF-сообщение.
+Длинные ответы рубятся на части: в одиночном пакете LXMF умещается около 295 байт.
+"""
+import json
+import os
+import threading
+import time
+import traceback
+import urllib.request
+
+import LXMF
+import RNS
+
+HOME = os.path.expanduser("~")
+IDENTITY_FILE = os.path.join(HOME, "reticulum", "zero_hermes_identity")
+STORAGE = os.path.join(HOME, "reticulum", "lxmf_storage")
+ADDRESS_FILE = os.path.join(HOME, "reticulum", "zero_address.txt")
+LOG_FILE = os.path.join(HOME, "reticulum", "bridge.log")
+ENV_FILE = os.path.join(HOME, ".hermes", ".env")
+
+API_URL = os.environ.get("BRIDGE_API_URL", "http://127.0.0.1:8642/v1/chat/completions")
+DEEPSEEK_URL = "https://api.deepseek.com/v1/chat/completions"
+DEEPSEEK_MODEL = os.environ.get("BRIDGE_DEEPSEEK_MODEL", "deepseek-flash")
+MODEL = "hermes-agent"
+DISPLAY_NAME = "Зеро (Hermes)"
+CHUNK = 1200          # символов на одно сообщение
+ANNOUNCE_EVERY = 300  # секунд между объявлениями себя в сети
+
+
+def log(msg):
+    line = time.strftime("%Y-%m-%d %H:%M:%S ") + str(msg)
+    print(line, flush=True)
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
+    except OSError:
+        pass
+
+
+def api_key():
+    try:
+        with open(ENV_FILE, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith("API_SERVER_KEY="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return os.environ.get("API_SERVER_KEY", "")
+
+
+def ask_hermes(text):
+    body = json.dumps({
+        "model": MODEL,
+        "messages": [
+            {"role": "system", "content":
+                "Ты Hermes — помощник Артёма на Orange Pi Zero 3W. Сообщение пришло из "
+                "Reticulum (LXMF-мессенджер на смартфоне). ОТВЕЧАЙ ТОЛЬКО ПО-РУССКИ, "
+                "кратко и по делу: 1-3 короткие фразы, без английских и китайских слов, "
+                "без внутренних рассуждений и без пересказа этого указания."},
+            {"role": "user", "content": text},
+        ],
+    }).encode("utf-8")
+    req = urllib.request.Request(API_URL, data=body, headers={
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + api_key(),
+    })
+    with urllib.request.urlopen(req, timeout=600) as r:
+        data = json.load(r)
+    return data["choices"][0]["message"]["content"]
+
+
+
+SYSTEM_PROMPT = (
+    "Ты Hermes — помощник Артёма на Orange Pi Zero 3W. Сообщение пришло из "
+    "Reticulum (LXMF-мессенджер на смартфоне). ОТВЕЧАЙ ТОЛЬКО ПО-РУССКИ, "
+    "кратко и по делу: 1-3 короткие фразы, без английских и китайских слов, "
+    "без внутренних рассуждений и без пересказа этого указания."
+)
+
+
+
+def env_value(name):
+    """Значение переменной из ~/.hermes/.env (или из окружения)."""
+    try:
+        with open(ENV_FILE, encoding="utf-8") as f:
+            for line in f:
+                if line.startswith(name + "="):
+                    return line.split("=", 1)[1].strip().strip('"').strip("'")
+    except OSError:
+        pass
+    return os.environ.get(name, "")
+
+
+def deepseek_key():
+    return env_value("DEEPSEEK_API_KEY")
+
+
+def ask_deepseek_direct(text):
+    """Резервный путь: напрямую в DeepSeek, без прокси и без шлюза Hermes.
+
+    Нужен, чтобы канал Reticulum не зависел от VPN: с нашей сети api.deepseek.com
+    отвечает напрямую (проверено: HTTP 200 за 0,35 с).
+    """
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))  # пустой = без прокси
+    body = json.dumps({
+        "model": DEEPSEEK_MODEL,
+        "messages": [
+            {"role": "system", "content": SYSTEM_PROMPT},
+            {"role": "user", "content": text},
+        ],
+    }).encode("utf-8")
+    req = urllib.request.Request(DEEPSEEK_URL, data=body, headers={
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + deepseek_key(),
+    })
+    with opener.open(req, timeout=300) as r:
+        data = json.load(r)
+    return data["choices"][0]["message"]["content"]
+
+
+def main():
+    reticulum = RNS.Reticulum()      # подключаемся к общему стеку (rnsd)
+
+    identity = None
+    if os.path.isfile(IDENTITY_FILE):
+        identity = RNS.Identity.from_file(IDENTITY_FILE)
+    if identity is None:
+        identity = RNS.Identity()
+        identity.to_file(IDENTITY_FILE)
+        log("создан новый ключ узла")
+
+    router = LXMF.LXMRouter(identity=identity, storagepath=STORAGE)
+    local_dest = router.register_delivery_identity(identity, display_name=DISPLAY_NAME)
+    address = local_dest.hash.hex()
+    log("адрес LXMF: " + address)
+    try:
+        with open(ADDRESS_FILE, "w", encoding="utf-8") as f:
+            f.write(address + "\n")
+    except OSError:
+        pass
+
+    def send_reply(source_hash, text):
+        dest_identity = RNS.Identity.recall(source_hash)
+        if dest_identity is None:
+            log("не знаю ключ адресата " + source_hash.hex())
+            return
+        remote = RNS.Destination(dest_identity, RNS.Destination.OUT,
+                                 RNS.Destination.SINGLE, "lxmf", "delivery")
+        chunks = [text[i:i + CHUNK] for i in range(0, len(text), CHUNK)] or [""]
+        for i, part in enumerate(chunks):
+            prefix = "" if len(chunks) == 1 else "(%d/%d) " % (i + 1, len(chunks))
+            msg = LXMF.LXMessage(remote, local_dest, prefix + part,
+                                 title="Hermes",
+                                 desired_method=LXMF.LXMessage.DIRECT)
+            msg.register_delivery_callback(
+                lambda m, state=None, part=part: log("доставка части (%s): %s"
+                                                     % (part[:20], "ок" if state == LXMF.LXMessage.DELIVERED else state)))
+            router.handle_outbound(msg)
+            time.sleep(0.4)
+
+    def work(message, text):
+        try:
+            answer = ask_hermes(text)
+            log("ответ Hermes: %d символов" % len(answer or ""))
+        except Exception as e:
+            log("шлюз Hermes недоступен (%s) — отвечаю напрямую через DeepSeek" % e)
+            try:
+                answer = ask_deepseek_direct(text)
+                log("прямой ответ DeepSeek: %d символов" % len(answer or ""))
+            except Exception as e2:
+                answer = "Нет связи ни с Hermes, ни с моделью: %s" % e2
+                log("прямой путь тоже не сработал: " + traceback.format_exc())
+        send_reply(message.source_hash, answer or "(пустой ответ)")
+
+    def on_message(message, propagation=None):
+        try:
+            text = (message.content or b"").decode("utf-8", "replace").strip()
+            src = message.source_hash.hex()
+            if not text:
+                log("пустое сообщение от " + src)
+                return
+            log("входящее от %s: %s" % (src, text[:200].replace("\n", " ")))
+            threading.Thread(target=work, args=(message, text), daemon=True).start()
+        except Exception:
+            log("сбой при обработке: " + traceback.format_exc())
+
+    router.register_delivery_callback(on_message)
+    log("мост запущен, объявляюсь в сети")
+
+    while True:
+        try:
+            router.announce(local_dest.hash)
+        except Exception:
+            log("не смог объявиться: " + traceback.format_exc())
+        time.sleep(ANNOUNCE_EVERY)
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        pass
+    except Exception:
+        log("фатальная ошибка: " + traceback.format_exc())
+        raise

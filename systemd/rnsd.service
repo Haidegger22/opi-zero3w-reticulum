@@ -1,0 +1,17 @@
+[Unit]
+Description=Reticulum Network Stack (rnsd)
+Documentation=https://reticulum.network/manual/
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+# Пользовательский юнит: %h — домашний каталог пользователя
+ExecStart=%h/reticulum/venv/bin/rnsd
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
