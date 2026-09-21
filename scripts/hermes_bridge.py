@@ -147,10 +147,32 @@ def main():
     except OSError:
         pass
 
+    def recall_identity(source_hash, wait_seconds=60):
+        """Ключ адресата узнаём из его объявления в сети. Если ключа нет —
+        просим сеть прислать объявление и ждём: без ключа ответ отправить нельзя.
+        Так мост отвечает и тому, кто написал впервые (например с телефона,
+        подключённого к другому узлу сети)."""
+        ident = RNS.Identity.recall(source_hash)
+        if ident is not None:
+            return ident
+        log("ключ адресата неизвестен, запрашиваю объявление у сети: " + source_hash.hex())
+        try:
+            RNS.Transport.request_path(source_hash)
+        except Exception:
+            log("не удалось запросить путь: " + traceback.format_exc())
+        deadline = time.time() + wait_seconds
+        while time.time() < deadline:
+            time.sleep(2)
+            ident = RNS.Identity.recall(source_hash)
+            if ident is not None:
+                log("ключ адресата получен, отвечаю")
+                return ident
+        log("объявление не пришло за %d с — ответ отправить не могу" % wait_seconds)
+        return None
+
     def send_reply(source_hash, text):
-        dest_identity = RNS.Identity.recall(source_hash)
+        dest_identity = recall_identity(source_hash)
         if dest_identity is None:
-            log("не знаю ключ адресата " + source_hash.hex())
             return
         remote = RNS.Destination(dest_identity, RNS.Destination.OUT,
                                  RNS.Destination.SINGLE, "lxmf", "delivery")
