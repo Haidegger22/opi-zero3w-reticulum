@@ -38,6 +38,23 @@ ANNOUNCE_EVERY = 300  # секунд между объявлениями себ�
 # не удалось отдать напрямую (получатель спит, пути нет), кладутся в накопитель
 # и доходят, когда получатель выйдет на связь.
 PROPAGATION_NODE = os.environ.get("LXMF_PROPAGATION_NODE", "").strip()
+
+# Кто я (задаётся в юните службы, чтобы копия скрипта на другом узле не выдавала себя за этот)
+SELF_DESCRIPTION = os.environ.get("LXMF_SELF", "Зеро — Hermes на Orange Pi Zero 3W")
+
+# Кто пишет: подставляем имя вместо адреса, иначе агент путает себя с собеседником
+SENDERS = {
+    "b897f0cb8e4740ad4c4495b2cd83b975": "Артём (смартфон)",
+    "c5a087b075a167a3185eaaeaeb1fe777": "Джарвис (Hermes на Raspberry Pi 5)",
+    "08e7880033f5b0c18af98bbde8f789b6": "Зеро (Hermes на Orange Pi Zero 3W)",
+    "f50f0c41f7b4508930c01a7ed0eb9559": "автотест проверки связи",
+    "edfde41e35bb49c67ad8a5efbf1cd742": "автотест проверки связи",
+}
+
+
+def sender_name(hex_hash):
+    return SENDERS.get(hex_hash, "неизвестный отправитель " + hex_hash[:8])
+
 DIRECT_WAIT = int(os.environ.get("LXMF_DIRECT_WAIT", "25"))     # с, ожидание подтверждения прямой доставки
 STORE_WAIT = int(os.environ.get("LXMF_STORE_WAIT", "40"))       # с, ожидание приёма накопителем
 
@@ -68,8 +85,9 @@ def ask_hermes(text):
         "model": MODEL,
         "messages": [
             {"role": "system", "content":
-                "Ты Hermes — помощник Артёма на Orange Pi Zero 3W. Сообщение пришло из "
-                "Reticulum (LXMF-мессенджер на смартфоне). ОТВЕЧАЙ ТОЛЬКО ПО-РУССКИ, "
+                "Ты " + SELF_DESCRIPTION + ". Отвечаешь на сообщения, пришедшие через Reticulum "
+                "(LXMF-мессенджер). В начале сообщения указано, кто пишет. Ты — не отправитель: "
+                "не путай себя с ним и не подписывайся его именем. ОТВЕЧАЙ ТОЛЬКО ПО-РУССКИ, "
                 "кратко и по делу: 1-3 короткие фразы, без английских и китайских слов, "
                 "без внутренних рассуждений и без пересказа этого указания."},
             {"role": "user", "content": text},
@@ -215,6 +233,21 @@ def main():
         except Exception:
             has_path = False
 
+        # Пути может не быть просто потому, что узел давно не слышал объявление
+        # получателя (например телефон подключён к другому узлу сети). Просим сеть
+        # дать маршрут и ждём его появления — тогда ответ уйдёт напрямую, а не в накопитель.
+        if not has_path:
+            try:
+                RNS.Transport.request_path(source_hash)
+                for _ in range(12):
+                    time.sleep(1)
+                    if RNS.Transport.has_path(source_hash):
+                        has_path = True
+                        break
+            except Exception:
+                has_path = False
+            log("маршрут до получателя: %s" % ("найден" if has_path else "не найден"))
+
         # Путь есть — отдаём напрямую (быстро). Пути нет — сразу в накопитель,
         # чтобы ответ не потерялся, пока получатель спит.
         if has_path:
@@ -234,6 +267,9 @@ def main():
             log("пути к получателю нет, а накопитель не настроен — ответ не отправлен")
 
     def work(message, text):
+        who = sender_name(message.source_hash.hex())
+        text = "[от %s] %s" % (who, text)
+        log("отправитель определён как: " + who)
         try:
             answer = ask_hermes(text)
             log("ответ Hermes: %d символов" % len(answer or ""))
